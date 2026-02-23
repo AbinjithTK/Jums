@@ -89,6 +89,56 @@ def _delete_one(table: str, uid: str, item_id: str) -> bool:
     return False
 
 
+def _compute_next_run(schedule_type: str, schedule_value: str) -> str | None:
+    """Compute the next run time for a cron job based on its schedule type."""
+    now = datetime.now(timezone.utc)
+    try:
+        if schedule_type == "once":
+            if schedule_value:
+                target = datetime.fromisoformat(schedule_value.replace("Z", "+00:00"))
+                return target.isoformat() if target > now else None
+            return None
+        elif schedule_type == "daily":
+            # schedule_value = "HH:MM"
+            parts = schedule_value.split(":")
+            hour = int(parts[0]) if len(parts) > 0 else 8
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            return target.isoformat()
+        elif schedule_type == "weekly":
+            # schedule_value = "Monday 09:00"
+            parts = schedule_value.split()
+            day_name = parts[0] if parts else "Monday"
+            time_str = parts[1] if len(parts) > 1 else "09:00"
+            time_parts = time_str.split(":")
+            hour = int(time_parts[0])
+            minute = int(time_parts[1]) if len(time_parts) > 1 else 0
+            days_map = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+                        "friday": 4, "saturday": 5, "sunday": 6}
+            target_day = days_map.get(day_name.lower(), 0)
+            days_ahead = target_day - now.weekday()
+            if days_ahead < 0:
+                days_ahead += 7
+            target = (now + timedelta(days=days_ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=7)
+            return target.isoformat()
+        elif schedule_type == "interval":
+            # schedule_value = minutes as string
+            minutes = int(schedule_value) if schedule_value else 30
+            return (now + timedelta(minutes=minutes)).isoformat()
+        elif schedule_type == "cron":
+            # Basic cron expression — for local dev, just compute approximate next
+            # Full cron parsing would need a library; approximate with daily
+            return (now + timedelta(hours=1)).isoformat()
+        else:
+            return None
+    except (ValueError, TypeError, IndexError):
+        return (now + timedelta(hours=1)).isoformat()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # STRANDS @tool FUNCTIONS — operate on in-memory db
 # ═══════════════════════════════════════════════════════════════════════════
@@ -638,6 +688,479 @@ def reschedule_failed_tasks(
     return {"goalId": goal_id, "rescheduledCount": len(rescheduled), "daysPushed": days_forward, "tasks": rescheduled}
 
 
+@tool
+def reschedule_plan(
+    goal_id: str,
+    start_date: str = "",
+    spread_days: int = 7,
+    preserve_order: bool = True,
+    user_id: str = FAKE_USER_ID,
+) -> dict:
+    """Reschedule ALL pending tasks for a goal into a new time window.
+
+    Use this when the user says things like "reschedule to next week",
+    "spread it over 2 weeks", "push everything to start Monday", etc.
+
+    Args:
+        goal_id: The goal whose plan to reschedule.
+        start_date: ISO date (YYYY-MM-DD) for the new start. Defaults to tomorrow.
+        spread_days: Number of days to spread tasks across (default 7 = one week).
+        preserve_order: Keep original task ordering when redistributing.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        Summary of all rescheduled tasks with old and new dates.
+    """
+    g = _find_one("goals", user_id, goal_id)
+    if not g:
+        return {"error": f"Goal {goal_id} not found"}
+
+    all_tasks = [t for t in _find("tasks", user_id) if t.get("goalId") == goal_id and not t.get("completed")]
+    if not all_tasks:
+        return {"goalId": goal_id, "message": "No pending tasks to reschedule"}
+
+    # Determine start date
+    if start_date:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            start = datetime.now(timezone.utc) + timedelta(days=1)
+    else:
+        start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    # Sort by current due date if preserving order
+    if preserve_order:
+        all_tasks.sort(key=lambda t: t.get("dueDate") or "9999-99-99")
+
+    # Distribute tasks evenly across the spread window
+    rescheduled = []
+    task_count = len(all_tasks)
+    for i, t in enumerate(all_tasks):
+        day_offset = int((i / max(task_count, 1)) * spread_days)
+        new_date = (start + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+        old_date = t.get("dueDate", "")
+        t["dueDate"] = new_date
+        rescheduled.append({
+            "id": t["id"], "title": t["title"],
+            "oldDate": old_date, "newDate": new_date,
+        })
+
+    # Also reschedule linked reminders
+    reminders_updated = 0
+    linked_reminders = [r for r in _find("reminders", user_id) if r.get("goalId") == goal_id and r.get("active")]
+    for r in linked_reminders:
+        # Keep the time pattern but note the reschedule
+        r["snoozedUntil"] = None
+        r["snoozeCount"] = 0
+        reminders_updated += 1
+
+    # Update goal insight
+    end_date = (start + timedelta(days=spread_days - 1)).strftime("%Y-%m-%d")
+    g["insight"] = f"Plan rescheduled: {task_count} tasks spread {start.strftime('%Y-%m-%d')} to {end_date}"
+
+    logger.info("📅 Rescheduled plan for '%s': %d tasks over %d days starting %s",
+                g["title"], task_count, spread_days, start.strftime("%Y-%m-%d"))
+    return {
+        "goalId": goal_id, "goalTitle": g["title"],
+        "rescheduledCount": task_count, "remindersReset": reminders_updated,
+        "startDate": start.strftime("%Y-%m-%d"), "endDate": end_date,
+        "spreadDays": spread_days, "tasks": rescheduled,
+    }
+
+
+@tool
+def shift_plan(
+    goal_id: str,
+    days: int = 7,
+    user_id: str = FAKE_USER_ID,
+) -> dict:
+    """Shift ALL pending tasks and reminders for a goal forward or backward by N days.
+
+    Use this when the user says "push everything back a week" or "move it all forward 3 days".
+
+    Args:
+        goal_id: The goal whose plan to shift.
+        days: Number of days to shift (positive = forward, negative = backward).
+        user_id: The authenticated user's ID.
+
+    Returns:
+        Summary of shifted tasks.
+    """
+    g = _find_one("goals", user_id, goal_id)
+    if not g:
+        return {"error": f"Goal {goal_id} not found"}
+
+    all_tasks = [t for t in _find("tasks", user_id) if t.get("goalId") == goal_id and not t.get("completed")]
+    shifted = []
+    for t in all_tasks:
+        old_date = t.get("dueDate", "")
+        if old_date:
+            try:
+                d = datetime.strptime(old_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                new_d = d + timedelta(days=days)
+                t["dueDate"] = new_d.strftime("%Y-%m-%d")
+                shifted.append({"id": t["id"], "title": t["title"], "oldDate": old_date, "newDate": t["dueDate"]})
+            except ValueError:
+                pass
+        else:
+            # No date set — assign relative to today
+            new_d = datetime.now(timezone.utc) + timedelta(days=max(1, days))
+            t["dueDate"] = new_d.strftime("%Y-%m-%d")
+            shifted.append({"id": t["id"], "title": t["title"], "oldDate": "(none)", "newDate": t["dueDate"]})
+
+    g["insight"] = f"Plan shifted by {days:+d} days — {len(shifted)} tasks updated"
+    logger.info("📅 Shifted plan for '%s' by %+d days: %d tasks", g["title"], days, len(shifted))
+    return {
+        "goalId": goal_id, "goalTitle": g["title"],
+        "shiftedCount": len(shifted), "daysMoved": days,
+        "tasks": shifted,
+    }
+
+
+@tool
+def bulk_update_tasks(
+    task_ids_json: str,
+    due_date: str | None = None,
+    priority: str | None = None,
+    active: bool | None = None,
+    user_id: str = FAKE_USER_ID,
+) -> dict:
+    """Update multiple tasks at once — set due date, priority, or active status in bulk.
+
+    Args:
+        task_ids_json: JSON array of task ID strings.
+        due_date: New due date for all tasks (YYYY-MM-DD).
+        priority: New priority for all tasks (high/medium/low).
+        active: Set active status for all tasks.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        Summary of updated tasks.
+    """
+    try:
+        task_ids = json.loads(task_ids_json) if isinstance(task_ids_json, str) else task_ids_json
+    except (json.JSONDecodeError, TypeError):
+        return {"error": "Invalid task_ids_json"}
+
+    updated = []
+    for tid in task_ids:
+        t = _find_one("tasks", user_id, str(tid))
+        if not t:
+            continue
+        if due_date is not None:
+            t["dueDate"] = due_date
+        if priority is not None:
+            t["priority"] = priority
+        if active is not None:
+            t["active"] = active
+        updated.append({"id": t["id"], "title": t["title"], "dueDate": t.get("dueDate"), "priority": t.get("priority")})
+
+    return {"updatedCount": len(updated), "tasks": updated}
+
+
+@tool
+def clear_and_replan(
+    goal_id: str,
+    keep_completed: bool = True,
+    user_id: str = FAKE_USER_ID,
+) -> dict:
+    """Delete all pending tasks and reminders for a goal so the agent can create a fresh plan.
+
+    Use this when the user wants to start over with a completely new schedule.
+
+    Args:
+        goal_id: The goal to clear.
+        keep_completed: Whether to keep already-completed tasks (default True).
+        user_id: The authenticated user's ID.
+
+    Returns:
+        Summary of what was cleared.
+    """
+    g = _find_one("goals", user_id, goal_id)
+    if not g:
+        return {"error": f"Goal {goal_id} not found"}
+
+    # Remove pending tasks
+    tasks_before = len(db["tasks"])
+    if keep_completed:
+        db["tasks"] = [t for t in db["tasks"] if not (
+            t.get("userId") == user_id and t.get("goalId") == goal_id and not t.get("completed")
+        )]
+    else:
+        db["tasks"] = [t for t in db["tasks"] if not (
+            t.get("userId") == user_id and t.get("goalId") == goal_id
+        )]
+    tasks_removed = tasks_before - len(db["tasks"])
+
+    # Remove linked reminders
+    rems_before = len(db["reminders"])
+    db["reminders"] = [r for r in db["reminders"] if not (
+        r.get("userId") == user_id and r.get("goalId") == goal_id
+    )]
+    rems_removed = rems_before - len(db["reminders"])
+
+    # Reset goal progress metadata
+    g["insight"] = "Plan cleared — ready for a fresh start"
+    g["activeAgent"] = ""
+
+    logger.info("🗑️ Cleared plan for '%s': %d tasks, %d reminders removed", g["title"], tasks_removed, rems_removed)
+    return {
+        "goalId": goal_id, "goalTitle": g["title"],
+        "tasksRemoved": tasks_removed, "remindersRemoved": rems_removed,
+        "message": "Plan cleared. Call decompose_goal_into_plan to create a new plan.",
+    }
+
+
+# ── Cron Jobs (Scheduled Automation) ──────────────────────────────────────
+
+# In-memory cron job store
+_cron_jobs: list[dict] = []
+_cron_next_check: float = 0
+
+
+@tool
+def cron_add(
+    name: str,
+    schedule_type: str,
+    action_message: str,
+    schedule_value: str = "",
+    description: str = "",
+    enabled: bool = True,
+    user_id: str = FAKE_USER_ID,
+) -> dict:
+    """Create a scheduled cron job that runs automatically.
+
+    Use this when the user says "remind me every morning", "check my goals weekly",
+    "run a daily briefing at 8am", etc.
+
+    Args:
+        name: Short name for the job (e.g. "Morning Briefing").
+        schedule_type: One of: "once", "daily", "weekly", "interval", "cron".
+        action_message: The message/prompt to execute when the job fires.
+        schedule_value: Schedule details depending on type:
+            - once: ISO datetime (e.g. "2026-03-01T08:00:00Z")
+            - daily: Time in HH:MM format (e.g. "08:00")
+            - weekly: Day and time (e.g. "Monday 09:00")
+            - interval: Minutes between runs (e.g. "30")
+            - cron: Cron expression (e.g. "0 8 * * *")
+        description: What this job does.
+        enabled: Whether the job starts enabled.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        The created cron job.
+    """
+    job = {
+        "id": _id(), "userId": user_id, "name": name,
+        "description": description, "enabled": enabled,
+        "scheduleType": schedule_type, "scheduleValue": schedule_value,
+        "actionMessage": action_message,
+        "createdAt": _now(), "updatedAt": _now(),
+        "lastRunAt": None, "nextRunAt": None,
+        "runCount": 0, "lastStatus": None,
+    }
+    # Compute next run
+    job["nextRunAt"] = _compute_next_run(schedule_type, schedule_value)
+    _cron_jobs.append(job)
+    logger.info("⏰ Created cron job: %s (%s %s)", name, schedule_type, schedule_value)
+    return {
+        "id": job["id"], "name": name, "scheduleType": schedule_type,
+        "scheduleValue": schedule_value, "enabled": enabled,
+        "nextRunAt": job["nextRunAt"],
+    }
+
+
+@tool
+def cron_list(include_disabled: bool = False, user_id: str = FAKE_USER_ID) -> list[dict]:
+    """List all scheduled cron jobs.
+
+    Args:
+        include_disabled: Whether to include disabled jobs.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        List of cron jobs.
+    """
+    jobs = [j for j in _cron_jobs if j.get("userId") == user_id]
+    if not include_disabled:
+        jobs = [j for j in jobs if j.get("enabled", True)]
+    return [{
+        "id": j["id"], "name": j["name"], "description": j.get("description", ""),
+        "scheduleType": j["scheduleType"], "scheduleValue": j["scheduleValue"],
+        "enabled": j["enabled"], "nextRunAt": j.get("nextRunAt"),
+        "lastRunAt": j.get("lastRunAt"), "runCount": j.get("runCount", 0),
+    } for j in jobs]
+
+
+@tool
+def cron_update(
+    job_id: str,
+    name: str | None = None,
+    schedule_type: str | None = None,
+    schedule_value: str | None = None,
+    action_message: str | None = None,
+    enabled: bool | None = None,
+    user_id: str = FAKE_USER_ID,
+) -> dict:
+    """Update a cron job's schedule, message, or enabled status.
+
+    Args:
+        job_id: The cron job ID.
+        name: New name.
+        schedule_type: New schedule type.
+        schedule_value: New schedule value.
+        action_message: New action message.
+        enabled: Enable or disable.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        Updated cron job.
+    """
+    job = next((j for j in _cron_jobs if j["id"] == job_id and j.get("userId") == user_id), None)
+    if not job:
+        return {"error": "Cron job not found"}
+    if name is not None:
+        job["name"] = name
+    if schedule_type is not None:
+        job["scheduleType"] = schedule_type
+    if schedule_value is not None:
+        job["scheduleValue"] = schedule_value
+    if action_message is not None:
+        job["actionMessage"] = action_message
+    if enabled is not None:
+        job["enabled"] = enabled
+    job["updatedAt"] = _now()
+    # Recompute next run
+    job["nextRunAt"] = _compute_next_run(job["scheduleType"], job["scheduleValue"])
+    return {
+        "id": job["id"], "name": job["name"],
+        "scheduleType": job["scheduleType"], "scheduleValue": job["scheduleValue"],
+        "enabled": job["enabled"], "nextRunAt": job["nextRunAt"],
+    }
+
+
+@tool
+def cron_remove(job_id: str, user_id: str = FAKE_USER_ID) -> dict:
+    """Delete a cron job.
+
+    Args:
+        job_id: The cron job ID.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        Confirmation.
+    """
+    global _cron_jobs
+    before = len(_cron_jobs)
+    _cron_jobs = [j for j in _cron_jobs if not (j["id"] == job_id and j.get("userId") == user_id)]
+    return {"success": len(_cron_jobs) < before, "deleted": job_id}
+
+
+@tool
+def cron_run(job_id: str, user_id: str = FAKE_USER_ID) -> dict:
+    """Manually trigger a cron job to run immediately.
+
+    Args:
+        job_id: The cron job ID.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        Execution result.
+    """
+    job = next((j for j in _cron_jobs if j["id"] == job_id and j.get("userId") == user_id), None)
+    if not job:
+        return {"error": "Cron job not found"}
+    job["lastRunAt"] = _now()
+    job["runCount"] = job.get("runCount", 0) + 1
+    job["lastStatus"] = "ok"
+    job["nextRunAt"] = _compute_next_run(job["scheduleType"], job["scheduleValue"])
+    return {
+        "id": job["id"], "name": job["name"],
+        "ran": True, "actionMessage": job["actionMessage"],
+        "message": f"Job '{job['name']}' executed. Action: {job['actionMessage'][:100]}",
+    }
+
+
+# ── MCP Server Management ────────────────────────────────────────────────
+
+@tool
+def connect_mcp_server(
+    name: str,
+    server_url: str,
+    description: str = "",
+    auth_token: str = "",
+    user_id: str = FAKE_USER_ID,
+) -> dict:
+    """Register and connect an MCP (Model Context Protocol) server as a skill.
+
+    Use this when the user says "connect to my MCP server", "add an MCP tool",
+    "link my calendar MCP", etc.
+
+    Args:
+        name: Display name for the MCP server (e.g. "Google Calendar", "Notion").
+        server_url: The MCP server URL or endpoint.
+        description: What this MCP server provides.
+        auth_token: Optional auth token for the server.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        The registered MCP skill.
+    """
+    skill = {
+        "id": _id(), "userId": user_id, "name": name,
+        "type": "mcp_server", "description": description,
+        "category": "mcp", "status": "connected",
+        "serverUrl": server_url, "authToken": auth_token,
+        "enabled": True, "createdAt": _now(),
+    }
+    db["skills"].append(skill)
+    logger.info("🔌 Connected MCP server: %s at %s", name, server_url)
+    return {
+        "id": skill["id"], "name": name, "status": "connected",
+        "serverUrl": server_url, "message": f"MCP server '{name}' connected successfully.",
+    }
+
+
+@tool
+def disconnect_mcp_server(
+    skill_id: str,
+    user_id: str = FAKE_USER_ID,
+) -> dict:
+    """Disconnect and remove an MCP server.
+
+    Args:
+        skill_id: The skill/MCP server ID to disconnect.
+        user_id: The authenticated user's ID.
+
+    Returns:
+        Confirmation.
+    """
+    s = _find_one("skills", user_id, skill_id)
+    if not s:
+        return {"error": "MCP server not found"}
+    s["status"] = "disconnected"
+    s["enabled"] = False
+    logger.info("🔌 Disconnected MCP server: %s", s.get("name", skill_id))
+    return {"id": skill_id, "name": s.get("name"), "status": "disconnected"}
+
+
+@tool
+def list_mcp_servers(user_id: str = FAKE_USER_ID) -> list[dict]:
+    """List all connected MCP servers.
+
+    Args:
+        user_id: The authenticated user's ID.
+
+    Returns:
+        List of MCP server skills.
+    """
+    skills = [s for s in _find("skills", user_id) if s.get("category") == "mcp"]
+    return [{
+        "id": s["id"], "name": s["name"], "status": s.get("status", "unknown"),
+        "serverUrl": s.get("serverUrl", ""), "description": s.get("description", ""),
+    } for s in skills]
+
+
 # ── Calendar & Scheduling ─────────────────────────────────────────────────
 
 @tool
@@ -1004,11 +1527,14 @@ ALL_TOOLS = [
     get_tasks, create_task, update_task, complete_task, delete_task,
     get_reminders, create_reminder, update_reminder, snooze_reminder, delete_reminder,
     decompose_goal_into_plan, adapt_plan, reschedule_failed_tasks,
+    reschedule_plan, shift_plan, bulk_update_tasks, clear_and_replan,
     get_schedule, assign_task_to_date, analyze_goal_timeline,
     analyze_progress, get_daily_summary, smart_suggest,
     search_memory, remember_fact, recall_memories,
     web_search,
     query_user_data, search_data, get_current_datetime,
+    cron_add, cron_list, cron_update, cron_remove, cron_run,
+    connect_mcp_server, disconnect_mcp_server, list_mcp_servers,
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1050,7 +1576,66 @@ You are NOT a passive assistant. You are an autonomous life coach that ACTS.
 1. Call analyze_progress for deep analysis
 2. Present findings with specific numbers
 
-### Card Block Format
+## RESCHEDULING PROTOCOL
+
+When the user asks to reschedule, change timing, push back, or reorganize their plan:
+
+### "Reschedule to next week" / "Do it in one week" / "Push everything back":
+1. First call get_goals to find the relevant goal
+2. Call reschedule_plan with the goal_id, start_date (next Monday or tomorrow), and spread_days
+3. Confirm: "Done! I've spread your X tasks across [date range]."
+
+### "Push everything back N days":
+1. Call shift_plan with the goal_id and days=N
+2. Confirm the shift
+
+### "Start over" / "Redo my plan" / "Make a new schedule":
+1. Call clear_and_replan to remove pending tasks/reminders
+2. IMMEDIATELY call decompose_goal_into_plan with a fresh plan
+3. Confirm the new plan
+
+### "Change all tasks to high priority" / bulk changes:
+1. Call get_tasks to get task IDs
+2. Call bulk_update_tasks with the IDs and new values
+
+### IMPORTANT: When the user says "reschedule" without specifying a goal:
+- Call get_goals to list all active goals
+- If there's only one active goal, use that
+- If multiple, pick the most recently discussed one or ask which goal
+
+## CRON JOBS / SCHEDULED AUTOMATION
+
+You can create recurring automated jobs. Use these when the user says things like:
+- "Remind me every morning at 8am to check my tasks"
+- "Run a weekly progress check every Sunday"
+- "Send me a daily briefing"
+- "Check my goals every 30 minutes"
+
+### Creating cron jobs:
+- Use cron_add with schedule_type: "once", "daily", "weekly", "interval", or "cron"
+- schedule_value format:
+  - daily: "HH:MM" (e.g. "08:00")
+  - weekly: "DayName HH:MM" (e.g. "Monday 09:00")
+  - interval: minutes as string (e.g. "30")
+  - once: ISO datetime (e.g. "2026-03-01T08:00:00Z")
+  - cron: cron expression (e.g. "0 8 * * *")
+
+### Managing cron jobs:
+- cron_list: Show all scheduled jobs
+- cron_update: Change schedule, message, or enable/disable
+- cron_remove: Delete a job
+- cron_run: Trigger a job immediately
+
+## MCP SERVER MANAGEMENT
+
+You can connect external MCP (Model Context Protocol) servers as skills.
+When the user says "connect my calendar", "add an MCP server", "link Notion":
+1. Call connect_mcp_server with the name, URL, and description
+2. Confirm the connection
+3. Use list_mcp_servers to show connected servers
+4. Use disconnect_mcp_server to remove one
+
+## Card Block Format
 When showing structured data, use this format:
 
 :::card{{type="<card_type>"}}
@@ -1058,7 +1643,8 @@ When showing structured data, use this format:
 :::
 
 Supported card types: daily_briefing, goal_check_in, reminder, journal_prompt,
-health_snapshot, plan_created, progress_report, suggestion, schedule_view
+health_snapshot, plan_created, progress_report, suggestion, schedule_view,
+schedule_changed, cron_status
 
 Only use cards for structured data. For normal conversation, reply naturally.
 
@@ -1070,10 +1656,14 @@ Only use cards for structured data. For normal conversation, reply naturally.
 - After creating a goal, ALWAYS plan it immediately with decompose_goal_into_plan
 - ALWAYS create reminders when creating plans
 - When creating tasks in decompose_goal_into_plan, assign due_date to each task
+- When the user says "reschedule", ALWAYS use reschedule_plan or shift_plan — NEVER just talk about it
+- When the user asks about scheduling or automation, use cron_add to set it up immediately
 
 ## Current Context
 - Date/Time: {now.strftime("%A, %B %d, %Y at %I:%M %p UTC")}
 - Day of Week: {now.strftime("%A")}
+- Tomorrow: {(now + timedelta(days=1)).strftime("%A, %B %d, %Y")}
+- Next Monday: {(now + timedelta(days=(7 - now.weekday()) % 7 or 7)).strftime("%Y-%m-%d")}
 """
 
 
@@ -1606,6 +2196,74 @@ async def update_skill(skill_id: str, request: Request):
 async def delete_skill(skill_id: str, request: Request):
     _delete_one("skills", request.state.user_id, skill_id)
     return JSONResponse(status_code=204, content=None)
+
+
+# ── Cron Jobs REST API ────────────────────────────────────────────────────
+
+@app.get("/api/cron")
+async def list_cron_jobs(request: Request, includeDisabled: bool = False):
+    uid = request.state.user_id
+    jobs = [j for j in _cron_jobs if j.get("userId") == uid]
+    if not includeDisabled:
+        jobs = [j for j in jobs if j.get("enabled", True)]
+    return jobs
+
+
+@app.post("/api/cron")
+async def create_cron_job(request: Request):
+    body = await request.json()
+    uid = request.state.user_id
+    job = {
+        "id": _id(), "userId": uid,
+        "name": body.get("name", "Untitled Job"),
+        "description": body.get("description", ""),
+        "enabled": body.get("enabled", True),
+        "scheduleType": body.get("scheduleType", "daily"),
+        "scheduleValue": body.get("scheduleValue", "08:00"),
+        "actionMessage": body.get("actionMessage", ""),
+        "createdAt": _now(), "updatedAt": _now(),
+        "lastRunAt": None, "nextRunAt": None,
+        "runCount": 0, "lastStatus": None,
+    }
+    job["nextRunAt"] = _compute_next_run(job["scheduleType"], job["scheduleValue"])
+    _cron_jobs.append(job)
+    return job
+
+
+@app.patch("/api/cron/{job_id}")
+async def update_cron_job(job_id: str, request: Request):
+    uid = request.state.user_id
+    job = next((j for j in _cron_jobs if j["id"] == job_id and j.get("userId") == uid), None)
+    if not job:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    body = await request.json()
+    for k, v in body.items():
+        if k not in ("id", "userId"):
+            job[k] = v
+    job["updatedAt"] = _now()
+    job["nextRunAt"] = _compute_next_run(job["scheduleType"], job["scheduleValue"])
+    return job
+
+
+@app.delete("/api/cron/{job_id}")
+async def delete_cron_job(job_id: str, request: Request):
+    global _cron_jobs
+    uid = request.state.user_id
+    _cron_jobs = [j for j in _cron_jobs if not (j["id"] == job_id and j.get("userId") == uid)]
+    return JSONResponse(status_code=204, content=None)
+
+
+@app.post("/api/cron/{job_id}/run")
+async def run_cron_job(job_id: str, request: Request):
+    uid = request.state.user_id
+    job = next((j for j in _cron_jobs if j["id"] == job_id and j.get("userId") == uid), None)
+    if not job:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    job["lastRunAt"] = _now()
+    job["runCount"] = job.get("runCount", 0) + 1
+    job["lastStatus"] = "ok"
+    job["nextRunAt"] = _compute_next_run(job["scheduleType"], job["scheduleValue"])
+    return {"ran": True, "job": job}
 
 
 # ── Weekly Progress ───────────────────────────────────────────────────────

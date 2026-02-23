@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/models/skill.dart';
+import '../../core/models/cron_job.dart';
 import '../../core/providers/skills_provider.dart';
+import '../../core/providers/cron_provider.dart';
 import '../../core/theme/jumns_colors.dart';
 import '../../core/theme/charcoal_decorations.dart';
 
@@ -44,16 +46,17 @@ class ToolkitScreen extends ConsumerWidget {
   }
 }
 
-class _ToolkitContent extends StatelessWidget {
+class _ToolkitContent extends ConsumerWidget {
   final List<Skill> skills;
   const _ToolkitContent({required this.skills});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final mcpSkills = skills.where((s) => s.isMcp).toList();
     final agentSkills = skills.where((s) => s.isAgent).toList();
     final regularSkills =
         skills.where((s) => !s.isMcp && !s.isAgent).toList();
+    final cronAsync = ref.watch(cronNotifierProvider);
 
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -138,6 +141,61 @@ class _ToolkitContent extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 12),
                 child: _McpServerCard(skill: e.$2, index: e.$1),
               )),
+        const SizedBox(height: 28),
+
+        // ── Scheduled Jobs (Cron) ──
+        CharcoalSectionHeader(
+          title: 'Scheduled Jobs',
+          trailing: 'Automation',
+          rotation: 1,
+        ),
+        const SizedBox(height: 12),
+        cronAsync.when(
+          loading: () => const Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          ),
+          error: (_, __) => Padding(
+            padding: const EdgeInsets.all(20),
+            child: Center(
+              child: Text('Could not load jobs',
+                  style: GoogleFonts.architectsDaughter(
+                      color: JumnsColors.ink.withAlpha(130),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700)),
+            ),
+          ),
+          data: (jobs) => jobs.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      Icon(Icons.schedule, size: 36,
+                          color: JumnsColors.ink.withAlpha(100)),
+                      const SizedBox(height: 8),
+                      Text('No scheduled jobs yet',
+                          style: GoogleFonts.architectsDaughter(
+                              color: JumnsColors.ink.withAlpha(130),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      Text('Ask Jumns in chat to set up automations',
+                          style: GoogleFonts.patrickHand(
+                              color: JumnsColors.ink.withAlpha(100),
+                              fontSize: 13)),
+                    ],
+                  ),
+                )
+              : Column(
+                  children: jobs.indexed.map((e) {
+                    final (i, job) = e;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _CronJobCard(job: job, index: i),
+                    );
+                  }).toList(),
+                ),
+        ),
         const SizedBox(height: 20),
 
         // ── Toolkit Store card ──
@@ -555,6 +613,107 @@ void _showComingSoon(BuildContext context) {
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(content: Text('Toolkit Store coming soon')),
   );
+}
+
+// ─── Cron Job card ───
+
+class _CronJobCard extends ConsumerWidget {
+  final CronJob job;
+  final int index;
+  const _CronJobCard({required this.job, required this.index});
+
+  static const _icons = [Icons.alarm, Icons.repeat, Icons.event, Icons.timer];
+  static const _colors = [
+    JumnsColors.mint,
+    JumnsColors.markerBlue,
+    JumnsColors.lavender,
+    JumnsColors.amber,
+  ];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final rotation = index.isEven ? -0.5 : 0.8;
+    final color = _colors[index % _colors.length];
+
+    return Transform.rotate(
+      angle: rotation * math.pi / 180,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: charcoalBorderDecoration(),
+        child: Row(
+          children: [
+            BlobShape(
+              color: color.withAlpha(job.enabled ? 200 : 80),
+              size: 44,
+              variant: index % 4,
+              child: Icon(
+                _icons[index % _icons.length],
+                color: JumnsColors.charcoal,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    job.name,
+                    style: GoogleFonts.architectsDaughter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: job.enabled
+                          ? JumnsColors.charcoal
+                          : JumnsColors.ink.withAlpha(100),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    job.scheduleDisplay,
+                    style: GoogleFonts.patrickHand(
+                      fontSize: 12,
+                      color: JumnsColors.ink.withAlpha(130),
+                    ),
+                  ),
+                  if (job.runCount > 0)
+                    Text(
+                      'Ran ${job.runCount}x',
+                      style: GoogleFonts.patrickHand(
+                        fontSize: 11,
+                        color: JumnsColors.ink.withAlpha(100),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // Toggle switch
+            Switch(
+              value: job.enabled,
+              onChanged: (val) {
+                ref.read(cronNotifierProvider.notifier).toggle(job.id, val);
+              },
+              activeColor: JumnsColors.mint,
+              inactiveThumbColor: JumnsColors.ink.withAlpha(80),
+            ),
+            // Run now button
+            GestureDetector(
+              onTap: () {
+                ref.read(cronNotifierProvider.notifier).runNow(job.id);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Running "${job.name}"...')),
+                );
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.play_arrow,
+                    color: JumnsColors.ink.withAlpha(150), size: 20),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ─── Toolkit Store card ───
