@@ -1,19 +1,31 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import '../../core/providers/messages_provider.dart';
 import '../../core/theme/jumns_colors.dart';
+import '../../core/theme/charcoal_decorations.dart';
 
-class VoiceModeScreen extends StatefulWidget {
+class VoiceModeScreen extends ConsumerStatefulWidget {
   const VoiceModeScreen({super.key});
 
   @override
-  State<VoiceModeScreen> createState() => _VoiceModeScreenState();
+  ConsumerState<VoiceModeScreen> createState() => _VoiceModeScreenState();
 }
 
-class _VoiceModeScreenState extends State<VoiceModeScreen>
+class _VoiceModeScreenState extends ConsumerState<VoiceModeScreen>
     with TickerProviderStateMixin {
   late final AnimationController _orbController;
   late final AnimationController _waveController;
+  final stt.SpeechToText _speech = stt.SpeechToText();
+
+  bool _isAvailable = false;
+  bool _isListening = false;
+  String _transcription = '';
+  String _aiResponse = '';
+  double _confidence = 0.0;
+  bool _isSending = false;
 
   @override
   void initState() {
@@ -26,10 +38,91 @@ class _VoiceModeScreenState extends State<VoiceModeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat();
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    _isAvailable = await _speech.initialize(
+      onStatus: (status) {
+        if (status == 'done' || status == 'notListening') {
+          if (mounted) setState(() => _isListening = false);
+        }
+      },
+      onError: (error) {
+        if (mounted) {
+          setState(() => _isListening = false);
+        }
+      },
+    );
+    if (mounted) setState(() {});
+  }
+
+  void _startListening() {
+    if (!_isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Speech recognition not available')),
+      );
+      return;
+    }
+    setState(() {
+      _transcription = '';
+      _aiResponse = '';
+      _isListening = true;
+    });
+    _speech.listen(
+      onResult: (result) {
+        if (mounted) {
+          setState(() {
+            _transcription = result.recognizedWords;
+            _confidence = result.confidence;
+          });
+          // Auto-send when speech is final
+          if (result.finalResult && _transcription.isNotEmpty) {
+            _sendTranscription();
+          }
+        }
+      },
+      listenFor: const Duration(seconds: 30),
+      pauseFor: const Duration(seconds: 3),
+      localeId: 'en_US',
+    );
+  }
+
+  void _stopListening() {
+    _speech.stop();
+    setState(() => _isListening = false);
+    if (_transcription.isNotEmpty) {
+      _sendTranscription();
+    }
+  }
+
+  Future<void> _sendTranscription() async {
+    if (_transcription.isEmpty || _isSending) return;
+    setState(() => _isSending = true);
+
+    try {
+      final result = await ref
+          .read(messagesNotifierProvider.notifier)
+          .sendChat(_transcription);
+      if (mounted) {
+        setState(() {
+          _aiResponse = result?.content ?? 'Done.';
+          _isSending = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _aiResponse = 'Could not get a response.';
+          _isSending = false;
+        });
+      }
+    }
   }
 
   @override
   void dispose() {
+    _speech.stop();
     _orbController.dispose();
     _waveController.dispose();
     super.dispose();
@@ -38,62 +131,94 @@ class _VoiceModeScreenState extends State<VoiceModeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: JumnsColors.charcoal,
+      backgroundColor: JumnsColors.paper,
       body: SafeArea(
         child: Column(
           children: [
-            // Top bar
+            // Top bar — charcoal sketch style
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white70),
-                    onPressed: () => Navigator.of(context).pop(),
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: BlobShape(
+                      color: JumnsColors.surface,
+                      size: 40,
+                      child: const Icon(Icons.close_rounded,
+                          color: JumnsColors.charcoal, size: 20),
+                    ),
                   ),
                   const Spacer(),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 5),
                     decoration: BoxDecoration(
-                      color: JumnsColors.mint.withAlpha(40),
-                      borderRadius: BorderRadius.circular(12),
+                      color: _isListening
+                          ? JumnsColors.mint.withAlpha(60)
+                          : JumnsColors.lavender.withAlpha(60),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.elliptical(14, 10),
+                        topRight: Radius.elliptical(10, 14),
+                        bottomLeft: Radius.elliptical(10, 14),
+                        bottomRight: Radius.elliptical(14, 10),
+                      ),
+                      border: Border.all(color: JumnsColors.ink, width: 1.5),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Container(
-                          width: 6, height: 6,
-                          decoration: const BoxDecoration(
-                              shape: BoxShape.circle, color: JumnsColors.mint),
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _isListening
+                                ? JumnsColors.mint
+                                : JumnsColors.ink.withAlpha(100),
+                          ),
                         ),
                         const SizedBox(width: 6),
-                        Text('LISTENING',
-                            style: GoogleFonts.architectsDaughter(
-                                color: JumnsColors.mint,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.5)),
+                        Text(
+                          _isListening
+                              ? 'LISTENING'
+                              : (_isSending ? 'THINKING' : 'READY'),
+                          style: GoogleFonts.architectsDaughter(
+                            color: JumnsColors.charcoal,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ],
               ),
             ),
-            const Spacer(flex: 2),
+            const Spacer(flex: 1),
+
             // User transcription
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Text(
-                '"What\'s on my schedule today?"',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.gloriaHallelujah(
-                  color: JumnsColors.paper,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w300,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: _transcription.isNotEmpty
+                    ? charcoalBorderDecoration(fill: JumnsColors.surface)
+                    : null,
+                child: Text(
+                  _transcription.isEmpty
+                      ? (_isListening ? 'Listening...' : 'Tap the mic to speak')
+                      : '"$_transcription"',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.gloriaHallelujah(
+                    color: JumnsColors.charcoal,
+                    fontSize: _transcription.isEmpty ? 16 : 20,
+                  ),
                 ),
               ),
             ),
-            const SizedBox(height: 40),
+            const SizedBox(height: 32),
             // Animated orb
             SizedBox(
               width: 160,
@@ -102,70 +227,144 @@ class _VoiceModeScreenState extends State<VoiceModeScreen>
                 animation: _orbController,
                 builder: (context, child) {
                   return CustomPaint(
-                    painter: _OrbPainter(_orbController.value),
+                    painter: _OrbPainter(
+                      _orbController.value,
+                      isActive: _isListening,
+                    ),
                   );
                 },
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             Text('JUMNS',
                 style: GoogleFonts.architectsDaughter(
-                    color: JumnsColors.mint,
+                    color: JumnsColors.charcoal,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1)),
             const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Text(
-                'You have 3 meetings today. The first one starts at 9:30 AM...',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.patrickHand(
-                    color: Colors.white60, fontSize: 15, height: 1.4),
+            // AI response
+            if (_aiResponse.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: charcoalBorderDecoration(
+                      fill: JumnsColors.mint.withAlpha(40)),
+                  child: Text(
+                    _aiResponse.length > 200
+                        ? '${_aiResponse.substring(0, 200)}...'
+                        : _aiResponse,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.patrickHand(
+                        color: JumnsColors.ink, fontSize: 15, height: 1.4),
+                  ),
+                ),
               ),
-            ),
+            if (_isSending)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: JumnsColors.charcoal.withAlpha(150),
+                  ),
+                ),
+              ),
             const Spacer(flex: 2),
             // Waveform
-            SizedBox(
-              height: 40,
-              child: AnimatedBuilder(
-                animation: _waveController,
-                builder: (context, child) {
-                  return CustomPaint(
-                    size: Size(MediaQuery.of(context).size.width, 40),
-                    painter: _WaveformPainter(_waveController.value),
-                  );
-                },
+            if (_isListening)
+              SizedBox(
+                height: 40,
+                child: AnimatedBuilder(
+                  animation: _waveController,
+                  builder: (context, child) {
+                    return CustomPaint(
+                      size: Size(MediaQuery.of(context).size.width, 40),
+                      painter: _WaveformPainter(_waveController.value),
+                    );
+                  },
+                ),
               ),
-            ),
             const SizedBox(height: 24),
             // Controls
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                IconButton(
-                  icon: const Icon(Icons.keyboard, color: Colors.white60, size: 28),
-                  onPressed: () => Navigator.of(context).pop(),
+                GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: BlobShape(
+                    color: JumnsColors.surface,
+                    size: 48,
+                    variant: 1,
+                    child: const Icon(Icons.keyboard_rounded,
+                        color: JumnsColors.charcoal, size: 24),
+                  ),
                 ),
-                Container(
-                  width: 64, height: 64,
-                  decoration: const BoxDecoration(
-                      shape: BoxShape.circle, color: JumnsColors.mint),
-                  child: const Icon(Icons.mic,
-                      color: JumnsColors.charcoal, size: 32),
+                // Main mic button
+                GestureDetector(
+                  onTap: _isListening ? _stopListening : _startListening,
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: _isListening
+                          ? JumnsColors.coral
+                          : JumnsColors.mint,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.elliptical(64, 55),
+                        topRight: Radius.elliptical(36, 58),
+                        bottomLeft: Radius.elliptical(27, 42),
+                        bottomRight: Radius.elliptical(73, 45),
+                      ),
+                      border: Border.all(color: JumnsColors.ink, width: 2),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: JumnsColors.borderShadow,
+                          offset: Offset(2, 3),
+                          blurRadius: 0,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _isListening ? Icons.stop_rounded : Icons.mic_rounded,
+                      color: JumnsColors.charcoal,
+                      size: 32,
+                    ),
+                  ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.more_horiz, color: Colors.white60, size: 28),
-                  onPressed: () => _showVoiceOptions(context),
+                GestureDetector(
+                  onTap: () => _showVoiceOptions(context),
+                  child: BlobShape(
+                    color: JumnsColors.surface,
+                    size: 48,
+                    variant: 2,
+                    child: const Icon(Icons.more_horiz_rounded,
+                        color: JumnsColors.charcoal, size: 24),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-            Text('TAP TO INTERRUPT',
-                style: GoogleFonts.architectsDaughter(
-                    color: Colors.white38,
-                    fontSize: 11,
-                    letterSpacing: 0.5)),
+            Text(
+              _isListening ? 'TAP TO STOP' : 'TAP TO SPEAK',
+              style: GoogleFonts.architectsDaughter(
+                  color: JumnsColors.ink.withAlpha(100),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5),
+            ),
+            if (!_isAvailable)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('Speech recognition unavailable on this device',
+                    style: GoogleFonts.architectsDaughter(
+                        color: JumnsColors.coral,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700)),
+              ),
             const SizedBox(height: 24),
           ],
         ),
@@ -176,7 +375,7 @@ class _VoiceModeScreenState extends State<VoiceModeScreen>
   void _showVoiceOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: JumnsColors.charcoal,
+      backgroundColor: JumnsColors.paper,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -186,19 +385,26 @@ class _VoiceModeScreenState extends State<VoiceModeScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.speed, color: Colors.white70),
+              leading: const Icon(Icons.speed, color: JumnsColors.charcoal),
               title: Text('Speech Rate',
-                  style: GoogleFonts.architectsDaughter(color: Colors.white70)),
+                  style: GoogleFonts.architectsDaughter(
+                      color: JumnsColors.charcoal,
+                      fontWeight: FontWeight.w700)),
               subtitle: Text('Normal',
-                  style: GoogleFonts.patrickHand(color: Colors.white38)),
+                  style: GoogleFonts.patrickHand(
+                      color: JumnsColors.ink.withAlpha(130))),
               onTap: () => Navigator.pop(ctx),
             ),
             ListTile(
-              leading: const Icon(Icons.record_voice_over, color: Colors.white70),
+              leading: const Icon(Icons.record_voice_over,
+                  color: JumnsColors.charcoal),
               title: Text('Voice Style',
-                  style: GoogleFonts.architectsDaughter(color: Colors.white70)),
+                  style: GoogleFonts.architectsDaughter(
+                      color: JumnsColors.charcoal,
+                      fontWeight: FontWeight.w700)),
               subtitle: Text('Default',
-                  style: GoogleFonts.patrickHand(color: Colors.white38)),
+                  style: GoogleFonts.patrickHand(
+                      color: JumnsColors.ink.withAlpha(130))),
               onTap: () => Navigator.pop(ctx),
             ),
           ],
@@ -208,29 +414,48 @@ class _VoiceModeScreenState extends State<VoiceModeScreen>
   }
 }
 
+
+// ─── Custom painters (charcoal sketch style) ───
+
 class _OrbPainter extends CustomPainter {
   final double progress;
-  _OrbPainter(this.progress);
+  final bool isActive;
+  _OrbPainter(this.progress, {this.isActive = false});
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2 - 10;
 
-    // Glow
+    // Outer glow — mint when active, lavender when idle
+    final glowColor =
+        isActive ? JumnsColors.mint.withAlpha(30) : JumnsColors.lavender.withAlpha(20);
     canvas.drawCircle(
-      center, radius + 15,
+      center,
+      radius + 15,
       Paint()
-        ..color = JumnsColors.mint.withAlpha(20)
+        ..color = glowColor
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20),
     );
 
-    // Main orb
+    // Charcoal border ring
     canvas.drawCircle(
-      center, radius,
+      center,
+      radius + 2,
+      Paint()
+        ..color = JumnsColors.ink
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+
+    // Main orb fill
+    final orbColor = isActive ? JumnsColors.mint : JumnsColors.lavender;
+    canvas.drawCircle(
+      center,
+      radius,
       Paint()
         ..shader = RadialGradient(
-          colors: [JumnsColors.mint.withAlpha(180), JumnsColors.mint.withAlpha(40)],
+          colors: [orbColor.withAlpha(200), orbColor.withAlpha(60)],
         ).createShader(Rect.fromCircle(center: center, radius: radius)),
     );
 
@@ -241,7 +466,11 @@ class _OrbPainter extends CustomPainter {
         center.dx + (radius + 8) * math.cos(angle),
         center.dy + (radius + 8) * math.sin(angle),
       );
-      canvas.drawCircle(dotCenter, 4, Paint()..color = JumnsColors.mint);
+      canvas.drawCircle(
+        dotCenter,
+        4,
+        Paint()..color = isActive ? JumnsColors.charcoal : JumnsColors.ink,
+      );
     }
   }
 
@@ -261,7 +490,8 @@ class _WaveformPainter extends CustomPainter {
 
     for (var i = 0; i < barCount; i++) {
       final baseHeight = rng.nextDouble() * 0.6 + 0.2;
-      final wave = math.sin((i / barCount + progress) * 2 * math.pi) * 0.3 + 0.7;
+      final wave =
+          math.sin((i / barCount + progress) * 2 * math.pi) * 0.3 + 0.7;
       final height = baseHeight * wave * size.height;
       final x = i * (barWidth + 2);
       final y = (size.height - height) / 2;
@@ -270,7 +500,7 @@ class _WaveformPainter extends CustomPainter {
         RRect.fromRectAndRadius(
             Rect.fromLTWH(x, y, barWidth, height),
             const Radius.circular(2)),
-        Paint()..color = JumnsColors.mint.withAlpha((150 * wave).toInt()),
+        Paint()..color = JumnsColors.charcoal.withAlpha((150 * wave).toInt()),
       );
     }
   }

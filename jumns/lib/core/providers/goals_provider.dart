@@ -76,3 +76,37 @@ final goalsNotifierProvider =
     StateNotifierProvider<GoalsNotifier, AsyncValue<List<Goal>>>((ref) {
   return GoalsNotifier(ref.watch(apiClientProvider));
 });
+
+/// Weekly progress data: task completion counts per day (Mon-Sun).
+class WeeklyProgress {
+  final List<int> counts; // 7 items: Mon=0 .. Sun=6
+  final int total;
+  final int bestDay; // -1 if no data
+
+  const WeeklyProgress({
+    this.counts = const [0, 0, 0, 0, 0, 0, 0],
+    this.total = 0,
+    this.bestDay = -1,
+  });
+
+  factory WeeklyProgress.fromJson(Map<String, dynamic> json) {
+    final rawCounts = json['counts'] as List<dynamic>? ?? [];
+    final counts = rawCounts.map((e) => (e as num).toInt()).toList();
+    while (counts.length < 7) counts.add(0);
+    return WeeklyProgress(
+      counts: counts,
+      total: (json['total'] as num?)?.toInt() ?? 0,
+      bestDay: (json['bestDay'] as num?)?.toInt() ?? -1,
+    );
+  }
+}
+
+final weeklyProgressProvider = FutureProvider<WeeklyProgress>((ref) async {
+  final api = ref.watch(apiClientProvider);
+  try {
+    final json = await api.get('/api/goals/weekly-progress');
+    return WeeklyProgress.fromJson(json as Map<String, dynamic>);
+  } catch (_) {
+    return const WeeklyProgress();
+  }
+});

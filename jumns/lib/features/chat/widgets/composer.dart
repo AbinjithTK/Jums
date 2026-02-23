@@ -1,15 +1,23 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../core/theme/jumns_colors.dart';
 
 /// Charcoal Sketch composer: wobbly input border, blob add button,
 /// charcoal send button with blob shape.
 class Composer extends StatefulWidget {
   final void Function(String text) onSend;
+  final void Function(File image, String text)? onSendImage;
   final bool isDisabled;
 
-  const Composer({super.key, required this.onSend, this.isDisabled = false});
+  const Composer({
+    super.key,
+    required this.onSend,
+    this.onSendImage,
+    this.isDisabled = false,
+  });
 
   @override
   State<Composer> createState() => _ComposerState();
@@ -17,7 +25,9 @@ class Composer extends StatefulWidget {
 
 class _ComposerState extends State<Composer> {
   final _controller = TextEditingController();
+  final _picker = ImagePicker();
   bool _hasText = false;
+  File? _attachedImage;
 
   @override
   void initState() {
@@ -37,9 +47,66 @@ class _ComposerState extends State<Composer> {
   void _handleSend() {
     if (widget.isDisabled) return;
     final text = _controller.text.trim();
+
+    if (_attachedImage != null) {
+      widget.onSendImage?.call(_attachedImage!, text);
+      _controller.clear();
+      setState(() => _attachedImage = null);
+      return;
+    }
+
     if (text.isEmpty) return;
     widget.onSend(text);
     _controller.clear();
+  }
+
+  Future<void> _pickImage() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: JumnsColors.paper,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt_rounded,
+                    color: JumnsColors.charcoal),
+                title: Text('Camera',
+                    style: GoogleFonts.architectsDaughter(
+                        fontWeight: FontWeight.w700,
+                        color: JumnsColors.charcoal)),
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_rounded,
+                    color: JumnsColors.charcoal),
+                title: Text('Gallery',
+                    style: GoogleFonts.architectsDaughter(
+                        fontWeight: FontWeight.w700,
+                        color: JumnsColors.charcoal)),
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (source == null) return;
+
+    final picked = await _picker.pickImage(
+      source: source,
+      maxWidth: 1200,
+      maxHeight: 1200,
+      imageQuality: 85,
+    );
+    if (picked != null) {
+      setState(() => _attachedImage = File(picked.path));
+    }
   }
 
   @override
@@ -82,11 +149,46 @@ class _ComposerState extends State<Composer> {
               ),
             ],
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Image preview strip
+              if (_attachedImage != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(
+                          _attachedImage!,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('Image attached',
+                            style: GoogleFonts.architectsDaughter(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: JumnsColors.ink.withAlpha(150))),
+                      ),
+                      GestureDetector(
+                        onTap: () =>
+                            setState(() => _attachedImage = null),
+                        child: const Icon(Icons.close_rounded,
+                            size: 20, color: JumnsColors.ink),
+                      ),
+                    ],
+                  ),
+                ),
+              Row(
             children: [
               // Add button — blob shape with lavender tint
               GestureDetector(
-                onTap: widget.isDisabled ? null : () {},
+                onTap: widget.isDisabled ? null : _pickImage,
                 child: Container(
                   width: 38,
                   height: 38,
@@ -144,9 +246,11 @@ class _ComposerState extends State<Composer> {
               ),
               const SizedBox(width: 4),
               // Mic button
-              if (!_hasText)
+              if (!_hasText && _attachedImage == null)
                 GestureDetector(
-                  onTap: widget.isDisabled ? null : () {},
+                  onTap: widget.isDisabled
+                      ? null
+                      : () => context.push('/voice'),
                   child: const SizedBox(
                     width: 38,
                     height: 38,
@@ -162,7 +266,7 @@ class _ComposerState extends State<Composer> {
                 onTap: widget.isDisabled
                     ? null
                     : () {
-                        if (_hasText) {
+                        if (_hasText || _attachedImage != null) {
                           _handleSend();
                         } else {
                           context.push('/voice');
@@ -173,7 +277,7 @@ class _ComposerState extends State<Composer> {
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: _hasText
+                    color: (_hasText || _attachedImage != null)
                         ? JumnsColors.charcoal
                         : Colors.transparent,
                     borderRadius: const BorderRadius.only(
@@ -182,14 +286,16 @@ class _ComposerState extends State<Composer> {
                       bottomLeft: Radius.elliptical(27, 42),
                       bottomRight: Radius.elliptical(73, 45),
                     ),
-                    border: _hasText
+                    border: (_hasText || _attachedImage != null)
                         ? null
                         : Border.all(color: Colors.transparent),
                   ),
                   child: Center(
                     child: Icon(
-                      _hasText ? Icons.edit_rounded : Icons.edit_rounded,
-                      color: _hasText
+                      (_hasText || _attachedImage != null)
+                          ? Icons.send_rounded
+                          : Icons.edit_rounded,
+                      color: (_hasText || _attachedImage != null)
                           ? JumnsColors.paper
                           : JumnsColors.charcoal,
                       size: 18,
@@ -198,7 +304,9 @@ class _ComposerState extends State<Composer> {
                 ),
               ),
             ],
-          ),
+          ), // end Row
+            ], // end Column children
+          ), // end Column
         ),
       ),
     );

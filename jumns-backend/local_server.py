@@ -1121,8 +1121,8 @@ def _sanitize(data: Any) -> Any:
 _conversation_history: list[dict] = []
 
 
-def _invoke_agent(user_message: str) -> dict[str, Any]:
-    """Create a Strands Agent and invoke it with the user's message."""
+def _invoke_agent(user_message: str, history: list[dict] | None = None) -> dict[str, Any]:
+    """Create a Strands Agent and invoke it with the user's message + history."""
     from strands import Agent
     from strands.models.gemini import GeminiModel
 
@@ -1139,10 +1139,26 @@ def _invoke_agent(user_message: str) -> dict[str, Any]:
         tools=ALL_TOOLS,
     )
 
+    # Build prompt with conversation context
+    prompt_parts = []
+    if history:
+        # Include recent conversation for context
+        prompt_parts.append("## Recent Conversation Context")
+        for msg in history[-20:]:  # Cap at 20 messages
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if content:
+                label = "User" if role == "user" else "You (Jumns)"
+                prompt_parts.append(f"{label}: {content}")
+        prompt_parts.append("\n## Current Message")
+
+    prompt_parts.append(user_message)
+    full_prompt = "\n".join(prompt_parts)
+
     logger.info("🤖 Invoking Strands agent with: %s", user_message[:100])
 
     try:
-        result = agent(user_message)
+        result = agent(full_prompt)
         response_text = str(result)
     except Exception as e:
         logger.exception("Agent invocation failed")
@@ -1202,6 +1218,7 @@ async def health():
 async def chat(request: Request):
     body = await request.json()
     message = body.get("message", "").strip()
+    history = body.get("history", [])
     uid = request.state.user_id
     if not message:
         return JSONResponse({"error": "Empty message"}, status_code=400)
@@ -1213,9 +1230,9 @@ async def chat(request: Request):
     }
     db["messages"].append(user_msg)
 
-    # Invoke Strands agent
+    # Invoke Strands agent with conversation history
     try:
-        result = _invoke_agent(message)
+        result = _invoke_agent(message, history=history)
     except Exception as e:
         logger.exception("Chat endpoint error")
         result = {"content": f"Sorry, something went wrong: {str(e)[:200]}", "cardType": None, "cardData": None}
@@ -1490,11 +1507,98 @@ async def list_skills(request: Request):
     return _find("skills", request.state.user_id)
 
 
+# ── Weekly Progress ───────────────────────────────────────────────────────
+
+@app.get("/api/goals/weekly-progress")
+async def weekly_progress(request: Request):
+    """Return task completion counts per day of the current week (Mon-Sun)."""
+    uid = request.state.user_id
+    tasks = _find("tasks", uid)
+    now = datetime.now(timezone.utc)
+    # Monday of this week
+    monday = now - timedelta(days=now.weekday())
+    monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    counts = [0] * 7  # Mon=0 .. Sun=6
+    for t in tasks:
+        if not t.get("completed"):
+            continue
+        # Check createdAt or dueDate to determine which day
+        date_str = t.get("dueDate") or t.get("createdAt", "")
+        if not date_str:
+            continue
+        try:
+            if "T" in date_str:
+                d = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            else:
+                d = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            continue
+        if monday <= d < monday + timedelta(days=7):
+            counts[d.weekday()] += 1
+
+    total = sum(counts)
+    best_day = counts.index(max(counts)) if total > 0 else -1
+    return {
+        "counts": counts,
+        "total": total,
+        "bestDay": best_day,
+        "weekStart": monday.strftime("%Y-%m-%d"),
+    }
+
+
 # ── Seed (no-op for local) ───────────────────────────────────────────────
 
 @app.post("/api/seed")
 async def seed():
     return {"seeded": True}
+
+
+# ── File Upload ───────────────────────────────────────────────────────────
+
+import base64
+from fastapi import UploadFile, File as FastAPIFile, Form
+
+@app.post("/api/upload")
+async def upload_file(
+    file: UploadFile = FastAPIFile(...),
+    message: str = Form(""),
+    request: Request = None,
+):
+    """Accept a file upload, store metadata, and optionally send to chat agent."""
+    uid = getattr(request.state, "user_id", FAKE_USER_ID) if request else FAKE_USER_ID
+    contents = await file.read()
+    file_id = _id()
+    file_record = {
+        "id": file_id,
+        "userId": uid,
+        "filename": file.filename or "upload",
+        "contentType": file.content_type or "application/octet-stream",
+        "size": len(contents),
+        "createdAt": _now(),
+    }
+    # Store in memory (in production, upload to S3/GCS)
+    db.setdefault("files", []).append({**file_record, "_data": contents})
+
+    result = {"file": file_record}
+
+    # If a message was included, send it to the agent with file context
+    if message.strip():
+        file_context = f"[User attached file: {file.filename} ({file.content_type}, {len(contents)} bytes)]"
+        full_message = f"{file_context}\n{message}"
+        agent_result = _invoke_agent(full_message)
+        ai_msg = {
+            "id": _id(), "userId": uid, "role": "assistant",
+            "type": "card" if agent_result.get("cardType") else "text",
+            "content": agent_result.get("content", ""),
+            "cardType": agent_result.get("cardType"),
+            "cardData": agent_result.get("cardData"),
+            "timestamp": _now(), "createdAt": _now(),
+        }
+        db["messages"].append(ai_msg)
+        result["response"] = ai_msg
+
+    return result
 
 
 # ── User profile (stub) ──────────────────────────────────────────────────

@@ -25,6 +25,8 @@ class ApiClient {
       : _auth = auth,
         _http = client ?? http.Client();
 
+  String get baseUrl => _baseUrl;
+
   Future<Map<String, String>> get _headers async {
     final token = _auth != null ? await _auth.getIdToken() : null;
     return {
@@ -67,6 +69,26 @@ class ApiClient {
         throw ApiException(res.statusCode, res.body);
       }
     });
+  }
+
+  /// Upload a file via multipart POST. Returns parsed JSON response.
+  Future<dynamic> uploadFile(
+    String path, {
+    required File file,
+    String fieldName = 'file',
+    Map<String, String>? fields,
+  }) async {
+    final uri = Uri.parse('$_baseUrl$path');
+    final request = http.MultipartRequest('POST', uri);
+    final headers = await _headers;
+    headers.remove('Content-Type'); // multipart sets its own
+    request.headers.addAll(headers);
+    request.files.add(await http.MultipartFile.fromPath(fieldName, file.path));
+    if (fields != null) request.fields.addAll(fields);
+
+    final streamed = await request.send().timeout(const Duration(seconds: 30));
+    final res = await http.Response.fromStream(streamed);
+    return _handleResponse(res);
   }
 
   /// Retry up to 2 times on network errors (SocketException, timeout).

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -73,6 +74,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
         Composer(
           onSend: _sendMessage,
+          onSendImage: _sendImageMessage,
           isDisabled: isLoading,
         ),
       ],
@@ -85,10 +87,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     try {
       await ref.read(messagesNotifierProvider.notifier).sendChat(text);
     } finally {
-      // Guard against using ref after dispose
       if (!_disposed) {
         ref.read(isChatLoadingProvider.notifier).state = false;
-        // Refresh goals/tasks/reminders — the backend may have created new ones
+        ref.read(goalsNotifierProvider.notifier).load();
+        ref.read(tasksNotifierProvider.notifier).load();
+        ref.read(remindersNotifierProvider.notifier).load();
+      }
+    }
+  }
+
+  Future<void> _sendImageMessage(File image, String text) async {
+    ref.read(isChatLoadingProvider.notifier).state = true;
+    try {
+      await ref
+          .read(messagesNotifierProvider.notifier)
+          .sendChatWithImage(text, image);
+    } finally {
+      if (!_disposed) {
+        ref.read(isChatLoadingProvider.notifier).state = false;
         ref.read(goalsNotifierProvider.notifier).load();
         ref.read(tasksNotifierProvider.notifier).load();
         ref.read(remindersNotifierProvider.notifier).load();
@@ -185,7 +201,18 @@ class _ChatList extends StatelessWidget {
           }
         } else if (msg.content != null && msg.content!.isNotEmpty) {
           widgets.add(
-              MessageBubble(text: msg.content!, isUser: msg.isUser));
+              MessageBubble(
+                text: msg.content!,
+                isUser: msg.isUser,
+                imageUrl: msg.imageUrl,
+              ));
+        } else if (msg.hasImage) {
+          widgets.add(
+              MessageBubble(
+                text: '',
+                isUser: msg.isUser,
+                imageUrl: msg.imageUrl,
+              ));
         }
 
         return Column(

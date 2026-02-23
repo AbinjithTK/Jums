@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/jumns_colors.dart';
@@ -9,8 +10,14 @@ import '../../../core/theme/jumns_colors.dart';
 class MessageBubble extends StatelessWidget {
   final String text;
   final bool isUser;
+  final String? imageUrl;
 
-  const MessageBubble({super.key, required this.text, required this.isUser});
+  const MessageBubble({
+    super.key,
+    required this.text,
+    required this.isUser,
+    this.imageUrl,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +57,30 @@ class MessageBubble extends StatelessWidget {
             ),
           ],
         ),
-        child: isUser ? _plainText(text) : _richAssistantContent(text),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (imageUrl != null && imageUrl!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: imageUrl!.startsWith('http')
+                      ? Image.network(imageUrl!,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const SizedBox())
+                      : Image.file(File(imageUrl!),
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const SizedBox()),
+                ),
+              ),
+            if (text.isNotEmpty)
+              isUser ? _plainText(text) : _richAssistantContent(text),
+          ],
+        ),
       ),
     );
   }

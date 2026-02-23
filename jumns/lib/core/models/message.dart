@@ -8,6 +8,7 @@ class Message {
   final Map<String, dynamic>? cardData;
   final String timestamp;
   final DateTime? createdAt;
+  final String? imageUrl; // Local file path or network URL
 
   const Message({
     required this.id,
@@ -19,6 +20,7 @@ class Message {
     this.cardData,
     required this.timestamp,
     this.createdAt,
+    this.imageUrl,
   });
 
   factory Message.fromJson(Map<String, dynamic> json) => Message(
@@ -33,9 +35,11 @@ class Message {
         createdAt: json['createdAt'] != null
             ? DateTime.tryParse(json['createdAt'] as String)
             : null,
+        imageUrl: json['imageUrl'] as String?,
       );
 
   bool get isUser => role == 'user';
   bool get isAssistant => role == 'assistant';
   bool get isCard => type == 'card' && cardType != null;
+  bool get hasImage => imageUrl != null && imageUrl!.isNotEmpty;
 }

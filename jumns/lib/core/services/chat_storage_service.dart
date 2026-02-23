@@ -91,5 +91,6 @@ class ChatStorageService {
         'cardData': m.cardData,
         'timestamp': m.timestamp,
         'createdAt': m.createdAt?.toIso8601String(),
+        'imageUrl': m.imageUrl,
       };
 }

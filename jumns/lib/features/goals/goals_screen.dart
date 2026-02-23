@@ -139,52 +139,7 @@ class GoalsScreen extends ConsumerWidget {
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: charcoalBorderDecoration(fill: JumnsColors.paper),
-                  child: Column(
-                    children: [
-                      SizedBox(
-                        height: 130,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: _buildWeekBars(),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const DashedSeparator(),
-                      const SizedBox(height: 10),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          RichText(
-                            text: TextSpan(
-                              style: GoogleFonts.architectsDaughter(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: JumnsColors.ink.withAlpha(150)),
-                              children: [
-                                const TextSpan(text: 'Total tasks: '),
-                                TextSpan(
-                                  text: '0',
-                                  style: GoogleFonts.gloriaHallelujah(
-                                      fontSize: 18,
-                                      color: JumnsColors.charcoal),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text('View Report',
-                              style: GoogleFonts.architectsDaughter(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  color: JumnsColors.charcoal,
-                                  decoration: TextDecoration.underline)),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+                child: _WeeklyProgressChart(),
               ),
             ),
 
@@ -193,72 +148,6 @@ class GoalsScreen extends ConsumerWidget {
         ),
       ),
     );
-  }
-
-  List<Widget> _buildWeekBars() {
-    const days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-    // TODO: Replace with real weekly progress data from API
-    // For now, show empty bars as placeholder
-    const heights = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-    const bestIndex = -1; // No best day when no data
-
-    return List.generate(7, (i) {
-      final isBest = i == bestIndex;
-      return Expanded(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (isBest)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: JumnsColors.charcoal,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text('Best!',
-                      style: GoogleFonts.architectsDaughter(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: JumnsColors.paper)),
-                ),
-              if (isBest) const SizedBox(height: 4),
-              Flexible(
-                child: FractionallySizedBox(
-                  heightFactor: heights[i],
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: isBest
-                          ? JumnsColors.mint
-                          : JumnsColors.lavender.withAlpha(130),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                          color: JumnsColors.ink, width: 2),
-                      boxShadow: isBest
-                          ? const [
-                              BoxShadow(
-                                color: JumnsColors.borderShadow,
-                                offset: Offset(2, 2),
-                              )
-                            ]
-                          : null,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(days[i],
-                  style: GoogleFonts.architectsDaughter(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: JumnsColors.ink)),
-            ],
-          ),
-        ),
-      );
-    });
   }
 
   void _showAddGoalDialog(BuildContext context, WidgetRef ref) {
@@ -392,6 +281,155 @@ class _GoalCard extends StatelessWidget {
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                         color: JumnsColors.charcoal)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Weekly Progress Chart (real data from API) ───
+
+class _WeeklyProgressChart extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final progressAsync = ref.watch(weeklyProgressProvider);
+
+    return progressAsync.when(
+      loading: () => Container(
+        height: 200,
+        padding: const EdgeInsets.all(16),
+        decoration: charcoalBorderDecoration(fill: JumnsColors.paper),
+        child: const Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, __) => Container(
+        height: 200,
+        padding: const EdgeInsets.all(16),
+        decoration: charcoalBorderDecoration(fill: JumnsColors.paper),
+        child: Center(
+          child: Text('Could not load progress',
+              style: GoogleFonts.architectsDaughter(
+                  color: JumnsColors.ink.withAlpha(130),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700)),
+        ),
+      ),
+      data: (wp) => _buildChart(wp),
+    );
+  }
+
+  Widget _buildChart(WeeklyProgress wp) {
+    const days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    final maxCount = wp.counts.reduce((a, b) => a > b ? a : b);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: charcoalBorderDecoration(fill: JumnsColors.paper),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 130,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: List.generate(7, (i) {
+                final isBest = i == wp.bestDay && wp.total > 0;
+                final heightFactor =
+                    maxCount > 0 ? wp.counts[i] / maxCount : 0.0;
+
+                return Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (isBest)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: JumnsColors.charcoal,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text('Best!',
+                                style: GoogleFonts.architectsDaughter(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: JumnsColors.paper)),
+                          ),
+                        if (isBest) const SizedBox(height: 4),
+                        if (wp.counts[i] > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Text('${wp.counts[i]}',
+                                style: GoogleFonts.gloriaHallelujah(
+                                    fontSize: 10,
+                                    color: JumnsColors.charcoal)),
+                          ),
+                        Flexible(
+                          child: FractionallySizedBox(
+                            heightFactor: heightFactor.clamp(0.0, 1.0),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: isBest
+                                    ? JumnsColors.mint
+                                    : JumnsColors.lavender.withAlpha(130),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                    color: JumnsColors.ink, width: 2),
+                                boxShadow: isBest
+                                    ? const [
+                                        BoxShadow(
+                                          color: JumnsColors.borderShadow,
+                                          offset: Offset(2, 2),
+                                        )
+                                      ]
+                                    : null,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(days[i],
+                            style: GoogleFonts.architectsDaughter(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: JumnsColors.ink)),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+          const SizedBox(height: 4),
+          const DashedSeparator(),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              RichText(
+                text: TextSpan(
+                  style: GoogleFonts.architectsDaughter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: JumnsColors.ink.withAlpha(150)),
+                  children: [
+                    const TextSpan(text: 'Total tasks: '),
+                    TextSpan(
+                      text: '${wp.total}',
+                      style: GoogleFonts.gloriaHallelujah(
+                          fontSize: 18, color: JumnsColors.charcoal),
+                    ),
+                  ],
+                ),
+              ),
+              Text('View Report',
+                  style: GoogleFonts.architectsDaughter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: JumnsColors.charcoal,
+                      decoration: TextDecoration.underline)),
             ],
           ),
         ],

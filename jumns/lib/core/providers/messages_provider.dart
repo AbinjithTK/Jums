@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/message.dart';
 import '../services/api_client.dart';
@@ -13,7 +14,9 @@ class MessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
   final ApiClient _api;
   final ChatStorageService _storage = ChatStorageService();
 
-  MessagesNotifier(this._api) : super(const AsyncValue.data([]));
+  MessagesNotifier(this._api) : super(const AsyncValue.data([])) {
+    load();
+  }
 
   /// Load messages — local cache first (instant), then server sync.
   Future<void> load() async {
@@ -58,11 +61,29 @@ class MessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
       timestamp: ts,
       createdAt: now,
     );
-    state = AsyncValue.data([...current, userMsg]);
+    final withUser = [...current, userMsg];
+    state = AsyncValue.data(withUser);
+
+    // Persist immediately so user message survives crashes
+    await _storage.saveMessages(withUser);
 
     try {
+      // Build conversation history for context (last 20 messages)
+      final recentMessages = (state.valueOrNull ?? [])
+          .where((m) => m.content != null && m.content!.isNotEmpty)
+          .toList();
+      final historyWindow = recentMessages.length > 20
+          ? recentMessages.sublist(recentMessages.length - 20)
+          : recentMessages;
+      final history = historyWindow
+          .map((m) => {'role': m.role, 'content': m.content})
+          .toList();
+
       // POST to backend — it calls Gemini, parses actions, returns response
-      final json = await _api.post('/api/chat', body: {'message': text});
+      final json = await _api.post('/api/chat', body: {
+        'message': text,
+        'history': history,
+      });
       final data = json as Map<String, dynamic>;
 
       final aiMsg = Message(
@@ -90,7 +111,74 @@ class MessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         timestamp: _formatTime(DateTime.now()),
         createdAt: DateTime.now(),
       );
-      state = AsyncValue.data([...state.valueOrNull ?? [], errMsg]);
+      final withErr = [...state.valueOrNull ?? [], errMsg];
+      state = AsyncValue.data(withErr);
+      await _storage.saveMessages(withErr);
+      return null;
+    }
+  }
+
+  /// Send a message with an attached image file.
+  Future<Message?> sendChatWithImage(String text, File imageFile) async {
+    final current = state.valueOrNull ?? [];
+    final now = DateTime.now();
+    final ts = _formatTime(now);
+
+    final userMsg = Message(
+      id: 'u_${now.millisecondsSinceEpoch}',
+      userId: 'local',
+      role: 'user',
+      type: 'text',
+      content: text.isEmpty ? '📎 Image' : text,
+      timestamp: ts,
+      createdAt: now,
+      imageUrl: imageFile.path,
+    );
+    final withUser = [...current, userMsg];
+    state = AsyncValue.data(withUser);
+    await _storage.saveMessages(withUser);
+
+    try {
+      final json = await _api.uploadFile(
+        '/api/upload',
+        file: imageFile,
+        fields: {'message': text},
+      );
+      final data = json as Map<String, dynamic>;
+      final response = data['response'] as Map<String, dynamic>?;
+
+      if (response != null) {
+        final aiMsg = Message(
+          id: response['id'] as String? ??
+              'a_${DateTime.now().millisecondsSinceEpoch}',
+          userId: 'jumns',
+          role: 'assistant',
+          type: response['type'] as String? ?? 'text',
+          content: response['content'] as String?,
+          cardType: response['cardType'] as String?,
+          cardData: response['cardData'] as Map<String, dynamic>?,
+          timestamp: _formatTime(DateTime.now()),
+          createdAt: DateTime.now(),
+        );
+        final withAi = [...state.valueOrNull ?? [], aiMsg];
+        state = AsyncValue.data(withAi);
+        await _storage.saveMessages(withAi);
+        return aiMsg;
+      }
+      return null;
+    } catch (e) {
+      final errMsg = Message(
+        id: 'err_${DateTime.now().millisecondsSinceEpoch}',
+        userId: 'jumns',
+        role: 'assistant',
+        type: 'text',
+        content: 'Could not upload the file. Please try again.',
+        timestamp: _formatTime(DateTime.now()),
+        createdAt: DateTime.now(),
+      );
+      final withErr = [...state.valueOrNull ?? [], errMsg];
+      state = AsyncValue.data(withErr);
+      await _storage.saveMessages(withErr);
       return null;
     }
   }
