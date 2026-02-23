@@ -166,7 +166,7 @@ class GoalsScreen extends ConsumerWidget {
                               children: [
                                 const TextSpan(text: 'Total tasks: '),
                                 TextSpan(
-                                  text: '24',
+                                  text: '0',
                                   style: GoogleFonts.gloriaHallelujah(
                                       fontSize: 18,
                                       color: JumnsColors.charcoal),
@@ -197,8 +197,10 @@ class GoalsScreen extends ConsumerWidget {
 
   List<Widget> _buildWeekBars() {
     const days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-    const heights = [0.40, 0.60, 0.30, 0.85, 0.50, 0.20, 0.45];
-    const bestIndex = 3;
+    // TODO: Replace with real weekly progress data from API
+    // For now, show empty bars as placeholder
+    const heights = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    const bestIndex = -1; // No best day when no data
 
     return List.generate(7, (i) {
       final isBest = i == bestIndex;

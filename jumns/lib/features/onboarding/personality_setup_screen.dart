@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/providers/auth_provider.dart';
 import '../../core/services/api_client.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/state/app_state.dart';
 import '../../core/theme/jumns_colors.dart';
 import '../../core/theme/charcoal_decorations.dart';
@@ -113,8 +114,13 @@ class _PersonalitySetupScreenState
     }
     if (!mounted) return;
     ref.read(appStateProvider.notifier).completeOnboarding();
-    // After onboarding, go to login so user creates an account
-    context.go('/login');
+    // Check if user is already authenticated
+    final authState = ref.read(authNotifierProvider);
+    if (authState.status == AuthStatus.authenticated) {
+      context.go('/chat');
+    } else {
+      context.go('/login');
+    }
   }
 
   @override

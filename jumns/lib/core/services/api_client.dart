@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'auth_service.dart';
@@ -31,32 +33,60 @@ class ApiClient {
     };
   }
 
-  // --- Generic helpers ---
+  // --- Generic helpers with retry ---
 
   Future<dynamic> get(String path, {Map<String, String>? query}) async {
-    final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: query);
-    final res = await _http.get(uri, headers: await _headers);
-    return _handleResponse(res);
+    return _withRetry(() async {
+      final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: query);
+      final res = await _http.get(uri, headers: await _headers);
+      return _handleResponse(res);
+    });
   }
 
   Future<dynamic> post(String path, {Object? body}) async {
-    final uri = Uri.parse('$_baseUrl$path');
-    final res = await _http.post(uri, headers: await _headers, body: jsonEncode(body));
-    return _handleResponse(res);
+    return _withRetry(() async {
+      final uri = Uri.parse('$_baseUrl$path');
+      final res = await _http.post(uri, headers: await _headers, body: jsonEncode(body));
+      return _handleResponse(res);
+    });
   }
 
   Future<dynamic> patch(String path, {Object? body}) async {
-    final uri = Uri.parse('$_baseUrl$path');
-    final res = await _http.patch(uri, headers: await _headers, body: jsonEncode(body));
-    return _handleResponse(res);
+    return _withRetry(() async {
+      final uri = Uri.parse('$_baseUrl$path');
+      final res = await _http.patch(uri, headers: await _headers, body: jsonEncode(body));
+      return _handleResponse(res);
+    });
   }
 
   Future<void> delete(String path) async {
-    final uri = Uri.parse('$_baseUrl$path');
-    final res = await _http.delete(uri, headers: await _headers);
-    if (res.statusCode != 204 && res.statusCode != 200) {
-      throw ApiException(res.statusCode, res.body);
+    return _withRetry(() async {
+      final uri = Uri.parse('$_baseUrl$path');
+      final res = await _http.delete(uri, headers: await _headers);
+      if (res.statusCode != 204 && res.statusCode != 200) {
+        throw ApiException(res.statusCode, res.body);
+      }
+    });
+  }
+
+  /// Retry up to 2 times on network errors (SocketException, timeout).
+  Future<T> _withRetry<T>(Future<T> Function() fn, {int retries = 2}) async {
+    for (var attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await fn().timeout(const Duration(seconds: 15));
+      } on SocketException {
+        if (attempt == retries) {
+          throw ApiException(0, 'No internet connection. Check your network and try again.');
+        }
+        await Future.delayed(Duration(milliseconds: 500 * (attempt + 1)));
+      } on TimeoutException {
+        if (attempt == retries) {
+          throw ApiException(0, 'Request timed out. Please try again.');
+        }
+        await Future.delayed(Duration(milliseconds: 500 * (attempt + 1)));
+      }
     }
+    throw ApiException(0, 'Unexpected retry failure');
   }
 
   dynamic _handleResponse(http.Response res) {

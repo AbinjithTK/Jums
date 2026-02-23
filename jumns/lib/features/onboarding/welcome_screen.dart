@@ -8,6 +8,7 @@ import '../../core/state/app_state.dart';
 import '../../core/providers/auth_provider.dart';
 import '../../core/theme/jumns_colors.dart';
 import '../../core/theme/charcoal_decorations.dart';
+import '../../core/utils/url_helper.dart';
 
 class WelcomeScreen extends ConsumerWidget {
   const WelcomeScreen({super.key});
@@ -136,14 +137,14 @@ class WelcomeScreen extends ConsumerWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   TextButton(
-                    onPressed: () {},
+                    onPressed: () => openUrl(context, JumnsUrls.privacyPolicy),
                     child: Text('Privacy Policy',
                         style: GoogleFonts.architectsDaughter(
                             color: JumnsColors.ink.withAlpha(100), fontSize: 11)),
                   ),
                   Text('·', style: TextStyle(color: JumnsColors.ink.withAlpha(100))),
                   TextButton(
-                    onPressed: () {},
+                    onPressed: () => openUrl(context, JumnsUrls.termsOfService),
                     child: Text('Terms of Service',
                         style: GoogleFonts.architectsDaughter(
                             color: JumnsColors.ink.withAlpha(100), fontSize: 11)),

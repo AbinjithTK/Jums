@@ -9,6 +9,7 @@ import '../../core/providers/messages_provider.dart';
 import '../../core/providers/subscription_provider.dart';
 import '../../core/theme/jumns_colors.dart';
 import '../../core/theme/charcoal_decorations.dart';
+import '../../core/utils/url_helper.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -381,7 +382,8 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 12),
                   _SettingsNavRow(
-                      label: 'Privacy Policy', onTap: () {}),
+                      label: 'Privacy Policy',
+                      onTap: () => openUrl(context, JumnsUrls.privacyPolicy)),
                   const SizedBox(height: 8),
                   // Clear history — red ink smear
                   GestureDetector(
@@ -454,12 +456,12 @@ class SettingsScreen extends ConsumerWidget {
                   _SettingsNavRow(
                       label: 'Theme',
                       trailing: 'Charcoal',
-                      onTap: () {}),
+                      onTap: () => _showComingSoon(context, 'Theme')),
                   const DashedSeparator(height: 1),
                   _SettingsNavRow(
                       label: 'Paper Texture',
                       trailing: 'Cream',
-                      onTap: () {}),
+                      onTap: () => _showComingSoon(context, 'Paper Texture')),
                 ],
               ),
             ),
@@ -491,17 +493,17 @@ class SettingsScreen extends ConsumerWidget {
                   _SettingsNavRow(
                       label: 'Daily Briefing',
                       trailing: '8:00 AM',
-                      onTap: () {}),
+                      onTap: () => _showComingSoon(context, 'Daily Briefing')),
                   const DashedSeparator(height: 1),
                   _SettingsNavRow(
                       label: 'Journal Prompt',
                       trailing: '9:00 PM',
-                      onTap: () {}),
+                      onTap: () => _showComingSoon(context, 'Journal Prompt')),
                   const DashedSeparator(height: 1),
                   _SettingsNavRow(
                       label: 'Reminders',
                       trailing: 'On',
-                      onTap: () {}),
+                      onTap: () => _showComingSoon(context, 'Reminders')),
                 ],
               ),
             ),
@@ -587,6 +589,12 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 100),
         ],
       ),
+    );
+  }
+
+  void _showComingSoon(BuildContext context, String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$feature settings coming soon')),
     );
   }
 

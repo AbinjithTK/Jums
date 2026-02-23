@@ -6,6 +6,7 @@ import 'package:purchases_flutter/purchases_flutter.dart';
 import '../../core/providers/subscription_provider.dart';
 import '../../core/theme/jumns_colors.dart';
 import '../../core/theme/charcoal_decorations.dart';
+import '../../core/utils/url_helper.dart';
 
 class PaywallScreen extends ConsumerStatefulWidget {
   const PaywallScreen({super.key});
@@ -214,7 +215,7 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         TextButton(
-                          onPressed: () {},
+                          onPressed: () => openUrl(context, JumnsUrls.termsOfService),
                           child: Text('Terms',
                               style: GoogleFonts.architectsDaughter(
                                   color: JumnsColors.ink.withAlpha(100),
@@ -224,7 +225,7 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
                             style: TextStyle(
                                 color: JumnsColors.ink.withAlpha(100))),
                         TextButton(
-                          onPressed: () {},
+                          onPressed: () => openUrl(context, JumnsUrls.privacyPolicy),
                           child: Text('Privacy',
                               style: GoogleFonts.architectsDaughter(
                                   color: JumnsColors.ink.withAlpha(100),

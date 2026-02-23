@@ -551,6 +551,12 @@ class _McpServerCard extends StatelessWidget {
   }
 }
 
+void _showComingSoon(BuildContext context) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text('Toolkit Store coming soon')),
+  );
+}
+
 // ─── Toolkit Store card ───
 
 class _ToolkitStoreCard extends StatelessWidget {
@@ -593,7 +599,7 @@ class _ToolkitStoreCard extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () {},
+                      onPressed: () => _showComingSoon(context),
                       child: const Text('Browse Store'),
                     ),
                   ),

@@ -2,13 +2,19 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 
-/// RevenueCat configuration.
-/// The SDK auto-detects the platform and uses the correct API key.
+/// RevenueCat configuration — pass via --dart-define at build time:
+///   flutter run \
+///     --dart-define=RC_GOOGLE_API_KEY=goog_xxx \
+///     --dart-define=RC_APPLE_API_KEY=appl_xxx
 class RCConfig {
-  // Google Play Store API key (from RevenueCat dashboard)
-  static const String googleApiKey = 'goog_kcZEKrSaBmOExbSLzeQxZjGLfHc';
-  // Apple App Store API key (from RevenueCat dashboard)
-  static const String appleApiKey = 'appl_itpKRhMuBPKqCzrRbCHZkPCLyMl';
+  static const String googleApiKey = String.fromEnvironment(
+    'RC_GOOGLE_API_KEY',
+    defaultValue: '',
+  );
+  static const String appleApiKey = String.fromEnvironment(
+    'RC_APPLE_API_KEY',
+    defaultValue: '',
+  );
   // Entitlement identifier configured in RevenueCat
   static const String entitlementId = 'pro';
 }
@@ -21,11 +27,14 @@ class RevenueCatService {
   Future<void> init({String? userId}) async {
     if (_initialized) return;
 
-    await Purchases.setLogLevel(LogLevel.debug);
-
     final apiKey = Platform.isIOS || Platform.isMacOS
         ? RCConfig.appleApiKey
         : RCConfig.googleApiKey;
+
+    // Skip initialization if no API key is configured
+    if (apiKey.isEmpty) return;
+
+    await Purchases.setLogLevel(LogLevel.debug);
 
     final config = PurchasesConfiguration(apiKey)
       ..appUserID = userId

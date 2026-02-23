@@ -156,7 +156,7 @@ class _VoiceModeScreenState extends State<VoiceModeScreen>
                 ),
                 IconButton(
                   icon: const Icon(Icons.more_horiz, color: Colors.white60, size: 28),
-                  onPressed: () {},
+                  onPressed: () => _showVoiceOptions(context),
                 ),
               ],
             ),
@@ -167,6 +167,40 @@ class _VoiceModeScreenState extends State<VoiceModeScreen>
                     fontSize: 11,
                     letterSpacing: 0.5)),
             const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showVoiceOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: JumnsColors.charcoal,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.speed, color: Colors.white70),
+              title: Text('Speech Rate',
+                  style: GoogleFonts.architectsDaughter(color: Colors.white70)),
+              subtitle: Text('Normal',
+                  style: GoogleFonts.patrickHand(color: Colors.white38)),
+              onTap: () => Navigator.pop(ctx),
+            ),
+            ListTile(
+              leading: const Icon(Icons.record_voice_over, color: Colors.white70),
+              title: Text('Voice Style',
+                  style: GoogleFonts.architectsDaughter(color: Colors.white70)),
+              subtitle: Text('Default',
+                  style: GoogleFonts.patrickHand(color: Colors.white38)),
+              onTap: () => Navigator.pop(ctx),
+            ),
           ],
         ),
       ),

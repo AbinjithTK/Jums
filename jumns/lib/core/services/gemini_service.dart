@@ -4,8 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// Direct Gemini API client — no backend needed.
 /// Calls Google's generativeLanguage REST API with the provided API key.
+///
+/// Pass the key at build time:
+///   flutter run --dart-define=GEMINI_API_KEY=your_key_here
 class GeminiService {
-  static const String _apiKey = 'AIzaSyDgSAaTXhsVDc5_ZlaiOkxrKaH5FiztLKU';
+  static const String _apiKey = String.fromEnvironment(
+    'GEMINI_API_KEY',
+    defaultValue: '',
+  );
   static const String _model = 'gemini-3-flash-preview';
   static const String _baseUrl =
       'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent';
@@ -32,6 +38,10 @@ Never use markdown formatting — respond in plain text since this is a mobile c
 
   /// Send a message and get a response. Maintains conversation history.
   Future<String> chat(String userMessage) async {
+    if (_apiKey.isEmpty) {
+      throw GeminiException(0, 'GEMINI_API_KEY not set. Pass it via --dart-define=GEMINI_API_KEY=your_key');
+    }
+
     // Add user turn to history
     _history.add({
       'role': 'user',

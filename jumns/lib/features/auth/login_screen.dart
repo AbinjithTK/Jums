@@ -6,6 +6,7 @@ import '../../core/providers/auth_provider.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/theme/jumns_colors.dart';
 import '../../core/theme/charcoal_decorations.dart';
+import '../../core/utils/url_helper.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -240,7 +241,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   TextButton(
-                    onPressed: () {},
+                    onPressed: () => openUrl(context, JumnsUrls.privacyPolicy),
                     child: Text('Privacy Policy',
                         style: GoogleFonts.architectsDaughter(
                             color: JumnsColors.ink.withAlpha(100),
@@ -250,7 +251,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       style: TextStyle(
                           color: JumnsColors.ink.withAlpha(100))),
                   TextButton(
-                    onPressed: () {},
+                    onPressed: () => openUrl(context, JumnsUrls.termsOfService),
                     child: Text('Terms of Service',
                         style: GoogleFonts.architectsDaughter(
                             color: JumnsColors.ink.withAlpha(100),

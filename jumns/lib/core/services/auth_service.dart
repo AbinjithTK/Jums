@@ -2,11 +2,24 @@ import 'package:amazon_cognito_identity_dart_2/cognito.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Configuration for AWS Cognito — update these with your actual values.
+/// Configuration for AWS Cognito — pass via --dart-define at build time:
+///   flutter run \
+///     --dart-define=COGNITO_USER_POOL_ID=us-east-1_xxx \
+///     --dart-define=COGNITO_CLIENT_ID=xxx \
+///     --dart-define=COGNITO_REGION=us-east-1
 class CognitoConfig {
-  static const String userPoolId = 'us-east-1_Bn4GrzTdg';
-  static const String clientId = '6v0sh32keeunk2e0j2sqlup6n';
-  static const String region = 'us-east-1';
+  static const String userPoolId = String.fromEnvironment(
+    'COGNITO_USER_POOL_ID',
+    defaultValue: '',
+  );
+  static const String clientId = String.fromEnvironment(
+    'COGNITO_CLIENT_ID',
+    defaultValue: '',
+  );
+  static const String region = String.fromEnvironment(
+    'COGNITO_REGION',
+    defaultValue: 'us-east-1',
+  );
 }
 
 /// Persists Cognito tokens in secure storage so sessions survive app restarts.
@@ -91,12 +104,17 @@ class AuthService {
 
   AuthService() {
     _storage = _SecureStorage();
+    // If Cognito is not configured, pool will be non-functional but won't crash
     _userPool = CognitoUserPool(
-      CognitoConfig.userPoolId,
-      CognitoConfig.clientId,
+      CognitoConfig.userPoolId.isEmpty ? 'placeholder' : CognitoConfig.userPoolId,
+      CognitoConfig.clientId.isEmpty ? 'placeholder' : CognitoConfig.clientId,
       storage: _storage,
     );
   }
+
+  /// Whether Cognito credentials have been configured via --dart-define.
+  bool get isConfigured =>
+      CognitoConfig.userPoolId.isNotEmpty && CognitoConfig.clientId.isNotEmpty;
 
   /// Returns the current valid JWT ID token, refreshing if needed.
   Future<String?> getIdToken() async {
@@ -116,6 +134,7 @@ class AuthService {
 
   /// Try to restore a previous session from secure storage.
   Future<AuthUser?> restoreSession() async {
+    if (!isConfigured) return null;
     try {
       // Check if we have a stored username
       const storage = FlutterSecureStorage();
