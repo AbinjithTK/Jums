@@ -1457,6 +1457,25 @@ async def update_settings(request: Request):
     return await get_settings(request)
 
 
+# ── User Settings (alias — Flutter calls /api/user-settings) ─────────────
+
+@app.get("/api/user-settings")
+async def get_user_settings(request: Request):
+    """Alias for /api/settings — Flutter frontend uses this path."""
+    return await get_settings(request)
+
+
+@app.post("/api/user-settings")
+async def post_user_settings(request: Request):
+    """Alias for PATCH /api/settings — Flutter POSTs to this path."""
+    uid = request.state.user_id
+    body = await request.json()
+    if uid not in _user_settings:
+        _user_settings[uid] = {}
+    _user_settings[uid].update(body)
+    return await get_settings(request)
+
+
 # ── Subscription (stub for RevenueCat) ────────────────────────────────────
 
 @app.get("/api/subscription/status")
@@ -1500,11 +1519,93 @@ async def dismiss_insight(insight_id: str, request: Request):
     return item
 
 
+@app.post("/api/insights/run")
+async def run_insights_engine(request: Request):
+    """Trigger a manual proactive insights generation run."""
+    uid = request.state.user_id
+    goals = _find("goals", uid)
+    tasks = _find("tasks", uid)
+    new_insights = []
+
+    # Simple pattern detection — generate insights based on current state
+    pending_tasks = [t for t in tasks if not t.get("completed")]
+    completed_tasks = [t for t in tasks if t.get("completed")]
+
+    if len(pending_tasks) > 10:
+        new_insights.append({
+            "id": _id(), "userId": uid, "type": "task_overload",
+            "title": "Task Overload Detected",
+            "content": f"You have {len(pending_tasks)} pending tasks. Consider prioritizing the top 3.",
+            "priority": "high", "read": False, "dismissed": False,
+            "relatedGoalId": None, "createdAt": _now(),
+        })
+
+    for g in goals:
+        if g.get("completed"):
+            continue
+        linked = [t for t in tasks if t.get("goalId") == g["id"]]
+        if not linked:
+            new_insights.append({
+                "id": _id(), "userId": uid, "type": "missing_plan",
+                "title": f'No plan for "{g["title"]}"',
+                "content": f'Your goal "{g["title"]}" has no tasks yet. Ask me to create a plan!',
+                "priority": "medium", "read": False, "dismissed": False,
+                "relatedGoalId": g["id"], "createdAt": _now(),
+            })
+
+    if completed_tasks:
+        new_insights.append({
+            "id": _id(), "userId": uid, "type": "progress_update",
+            "title": "Keep it up!",
+            "content": f"You've completed {len(completed_tasks)} tasks so far. Great momentum!",
+            "priority": "low", "read": False, "dismissed": False,
+            "relatedGoalId": None, "createdAt": _now(),
+        })
+
+    db["insights"].extend(new_insights)
+    return {"generated": len(new_insights), "total": len(_find("insights", uid))}
+
+
 # ── Skills ────────────────────────────────────────────────────────────────
 
 @app.get("/api/skills")
 async def list_skills(request: Request):
     return _find("skills", request.state.user_id)
+
+
+@app.post("/api/skills")
+async def create_skill(request: Request):
+    body = await request.json()
+    uid = request.state.user_id
+    skill = {
+        "id": _id(), "userId": uid,
+        "name": body.get("name", ""),
+        "type": body.get("type", "mcp"),
+        "description": body.get("description", ""),
+        "category": body.get("category", "mcp"),
+        "enabled": True,
+        "createdAt": _now(),
+    }
+    db["skills"].append(skill)
+    return skill
+
+
+@app.patch("/api/skills/{skill_id}")
+async def update_skill(skill_id: str, request: Request):
+    s = _find_one("skills", request.state.user_id, skill_id)
+    if not s:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    body = await request.json()
+    for k, v in body.items():
+        if k not in ("id", "userId"):
+            s[k] = v
+    return s
+
+
+@app.delete("/api/skills/{skill_id}")
+async def delete_skill(skill_id: str, request: Request):
+    _delete_one("skills", request.state.user_id, skill_id)
+    return JSONResponse(status_code=204, content=None)
 
 
 # ── Weekly Progress ───────────────────────────────────────────────────────
@@ -1609,6 +1710,14 @@ async def user_profile():
         "id": FAKE_USER_ID, "name": "Local Dev User",
         "email": "dev@jumns.local", "plan": "free",
     }
+
+
+# ── Access Code (stub) ───────────────────────────────────────────────────
+
+@app.get("/api/access-code/status")
+async def access_code_status():
+    """Stub — returns not activated. For production, check against a real code store."""
+    return {"activated": False}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
