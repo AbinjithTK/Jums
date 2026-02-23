@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/state/app_state.dart';
 import '../../core/providers/auth_provider.dart';
 import '../../core/theme/jumns_colors.dart';
@@ -117,10 +118,12 @@ class WelcomeScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
               GestureDetector(
-                onTap: () {
+                onTap: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setBool('demo_mode', true);
                   ref.read(appStateProvider.notifier).completeOnboarding();
                   ref.read(demoModeProvider.notifier).state = true;
-                  context.go('/chat');
+                  if (context.mounted) context.go('/chat');
                 },
                 child: Text('Skip for now',
                     style: GoogleFonts.architectsDaughter(

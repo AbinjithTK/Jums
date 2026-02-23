@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/navigation/router.dart';
+import 'core/providers/auth_provider.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/revenuecat_service.dart';
 import 'core/theme/jumns_theme.dart';
@@ -24,6 +26,10 @@ void main() async {
   // Try to restore a previous Cognito session (so the user stays logged in)
   final restoredUser = await authService.restoreSession();
 
+  // Check if demo mode was previously enabled
+  final prefs = await SharedPreferences.getInstance();
+  final wasDemoMode = prefs.getBool('demo_mode') ?? false;
+
   // Initialize RevenueCat — pass the user ID if we have one
   // Wrapped in try-catch: emulators without Play Store will fail here
   try {
@@ -36,6 +42,7 @@ void main() async {
     overrides: [
       authServiceProvider.overrideWithValue(authService),
       revenueCatServiceProvider.overrideWithValue(rc),
+      if (wasDemoMode) demoModeProvider.overrideWith((ref) => true),
     ],
     child: const JumnsApp(),
   ));

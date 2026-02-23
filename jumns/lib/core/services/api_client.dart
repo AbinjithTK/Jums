@@ -77,8 +77,10 @@ class ApiException implements Exception {
   String toString() => 'ApiException($statusCode): $body';
 }
 
-/// In demo mode, create ApiClient without auth (local server doesn't need it).
-/// In production, create with AuthService for Cognito JWT tokens.
+/// Creates ApiClient with AuthService for Cognito JWT tokens.
+/// In demo/local mode the auth service still exists but tokens will be null,
+/// which is fine — the local server ignores Authorization headers.
 final apiClientProvider = Provider<ApiClient>((ref) {
-  return ApiClient();
+  final auth = ref.watch(authServiceProvider);
+  return ApiClient(auth: auth);
 });

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/providers/auth_provider.dart';
 import '../../core/providers/messages_provider.dart';
 import '../../core/providers/subscription_provider.dart';
@@ -509,9 +510,12 @@ class SettingsScreen extends ConsumerWidget {
 
           // ── Sign Out button (red ink smear) ──
           GestureDetector(
-            onTap: () {
+            onTap: () async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('demo_mode', false);
+              ref.read(demoModeProvider.notifier).state = false;
               ref.read(authNotifierProvider.notifier).signOut();
-              context.go('/login');
+              if (context.mounted) context.go('/login');
             },
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 16),
